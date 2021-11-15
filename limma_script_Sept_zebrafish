@@ -1,0 +1,780 @@
+####Install yo packages, gurl###
+
+BiocManager::install("limma")
+BiocManager::install(c("broom", "biobroom"))
+install.packages("BioBase")
+install.packages("tidyverse")
+#install.packages(c("ggrepel", "ggforce"))
+install.packages(c("spatial", "littler", "stringi"))
+#install.packages("ggpubr")
+BiocManager::install("PCAtools")
+install.packages("statmod")
+install.packages("ggvenn")
+BiocManager::install("biomaRt")
+BiocManager::install("GO.db")
+install.packages("magick")
+
+#Generic
+library(broom)
+library(biobroom)
+library(ggplot2)
+library(ggpubr)
+library(ggrepel)
+library(RSQLite)
+library(limma)
+library(dplyr)
+library(Biobase)
+library(tidyverse)
+library(ggvenn)
+library(clusterProfiler)
+
+#PCAMovie
+library(magick)
+
+#Annotation
+library(GO.db)
+
+
+#library(ggfortify)
+#library(preprocessCore)
+#library(biomaRt)
+
+
+setwd("~/Desktop/WindowsShare/Bioinformatics/Transcriptomics/OBERON_WP2/")
+setwd("C:/Users/HERACLES-admin/Desktop/WindowsNewShare/Bioinformatics/Transcriptomics/OBERON_WP2")
+
+### -------------------------------------Read files in--------------------------------------####
+Control_1 <- read.csv("1.5.txt")
+Control_2 <- read.csv("2.5.txt")
+Control_3 <- read.csv("3.5.txt")
+Control_4 <- read.csv("4.5.txt")
+Amiodarone_1 <- read.csv("1.6.txt")
+Amiodarone_2 <- read.csv("2.6.txt")
+Amiodarone_3 <- read.csv("3.6.txt")
+Amiodarone_4 <- read.csv("4.6.txt")
+DEHP10_1 <- read.csv("1.7.txt")
+DEHP10_2 <- read.csv("2.7.txt")
+DEHP10_3 <- read.csv("3.7.txt")
+DEHP10_4 <- read.csv("4.7.txt")
+DEHP25_1 <- read.csv("1.8.txt")
+DEHP25_2 <- read.csv("2.8.txt")
+DEHP25_3 <- read.csv("3.8.txt")
+DEHP25_4 <- read.csv("4.8.txt")
+
+
+#### Set up files ####
+### Read in Sample Data Relationship File (SDRF) file to organize sample data ###
+SDRF <- read.delim("Targets.txt", check.names=FALSE, stringsAsFactors=FALSE)
+SDRF[,c("ArrayDataFile", "Characteristics[treatment]", "Characteristics[batch]")]
+
+Treatment <-SDRF[,"Characteristics[treatment]"]
+Batch <- SDRF[, "Characteristics[batch]"]
+
+levels <- c("Control", "Amiodarone", "DEHP 10", "DEHP 25")
+batch <- c("1", "2", "3", "4")
+#Treatment <- factor(Treatment, levels=levels)
+Batch <- factor(Batch, levels = batch)
+
+### Note: This version is per "limma Users Guide.pdf" pages 114 >###
+### Also good: rdocumentation.org/packages/limma/3.28.14 website
+### read.maimages constructs quality weights for each spot - go to Quality Weights in
+### rdocumentation.org/packages/limma/version/3.28.14/topics/QualityWeights to adjust
+###go to read.maimages in above link for adjustments to the arguments###
+
+
+
+### Read the gene expression intensity data:
+
+x <- read.maimages(SDRF[,"ArrayDataFile"], source="agilent.median", 
+                   green.only=TRUE, other.columns = 
+                     "gIsWellAboveBG")
+
+
+###Check 'er out, eh ###
+dim(x)
+
+raw_bp <- boxplot(x$E, varwidth = TRUE, cex = 0.1, ylab = "Expression", xlab = "Sample", 
+                  las = 2, names = Treatment, cex.axis = 0.5)
+
+raw_bplog <- boxplot(log2(x$E), varwidth = TRUE, cex = 0.1, ylab = "Log2 Expression", xlab = "Sample", 
+                     las = 2, names = Treatment, cex.axis = 0.5)
+
+
+########### Data Type #######################
+raw_data <- x$E
+
+logdata <- log2(x$E)
+
+#### -------------------- Raw data check ---------------------------------- ####
+### source: https://rstudio-pubs-static.s3.amazonaws.com/98999_50e28d4bc1324523899f9b27949ba4fd.html
+logdata <- log2(x$E)
+dim(x$E)
+dim(logdata)
+probemeans <- apply(logdata, 1, mean)
+
+probesd <- apply(logdata, 1, sd)
+
+plot(probemeans, probesd)
+
+### Check
+
+
+raw_exp_long <- logdata2 %>% 
+  pivot_longer(1:4, names_to = "Sample", values_to = "Expr")
+
+raw_exp_long <- full_join(raw_exp_long, pData, by = c("Sample"="Treatment"))
+
+raw_exp_long %>% 
+  ggplot(aes(log10(Expr + 1), col = Sample)) +
+  geom_freqpoly(bins = 30) +
+  facet_grid(rows = vars(Sample), cols = vars(Batch)) +
+  ylab("Expression")
+
+raw_exp_long %>% 
+  ggplot(aes(factor(Sample), log10(Expr + 1), fill = Sample)) +
+  geom_boxplot () +
+  theme(axis.text.x = element_text(size = 10, angle = 45)) +
+  facet_grid(cols = vars(Batch))
+
+
+#### --------- PCAs ------ ####
+pDataFile = file.path("~/Desktop/WindowsShare/Transcriptomics/OBERON_WP2/", "pData.txt")
+pData <- read.table(pDataFile, row.names = 1, header = TRUE, sep = "\t")
+rownames(pData)
+dim(pData)
+summary(pData)
+names(pData)
+
+
+autoplot(sample_pca, data = pData, colour = "Treatment")
+
+
+
+#PCA
+#source: Klaus and Reisenauer 2018 - An end to end workflow for differential GE
+## This method visualizes batch effects as well
+PCA_raw <- prcomp(t(logdata), scale. = FALSE)
+percentVar <- round(100*PCA_raw$sdev^2/sum(PCA_raw$sdev^2), 1)
+sd_ratio <- sqrt(percentVar[2] / percentVar[1])
+dataGG <- data.frame(PC1 = PCA_raw$x[,1], PC2 = PCA_raw$x[,2], 
+                     Treatment = c(rep("Control", 4), rep("Amiodarone", 4), rep("DEHP10", 4), rep("DEHP25", 4)),
+                     Batch = c("First", "Second", "Third", "Fourth","First", "Second", "Third", "Fourth", "First", "Second", "Third", "Fourth", "First", "Second", "Third", "Fourth"))
+
+                     
+ggplot(dataGG, aes(PC1, PC2)) +
+  geom_point(aes(shape = Batch, colour = Treatment)) +
+  ggtitle("PCA Plot of Log Transformed Raw Expression Data") +
+  xlab(paste0("PC1, Var Exp: ", percentVar[1], "%")) +
+  ylab(paste0("PC2, Var Expp: ", percentVar[2], "%")) +
+  theme(plot.title = element_text(hjust = 0.5), 
+        panel.background = element_rect(fill = "lightgray", colour = "white")) +
+  coord_fixed(ratio = sd_ratio) +
+  scale_color_manual(values = c("darkorange2", "dodgerblue4", "green", "red"))
+
+
+## another one
+## source: https://tavareshugo.github.io/data-carpentry-rnaseq/03_rnaseq_pca.html
+## rows = samples; columns = genes
+
+
+logdata2 <- as.data.frame(logdata)
+logdata2 <- rowid_to_column(logdata2)
+colnames(logdata2) <- c("Gene", rep("Control", 4), 
+                        rep("Amiodarone", 4), rep("DEHP10", 4), rep("DEHP25", 4))
+                        
+logdata2 <- column_to_rownames(logdata2, var = "Gene")
+pca_matrix <- logdata2 %>% 
+  as.matrix() %>% 
+  t()
+
+sample_pca <- prcomp(pca_matrix)
+pca_matrix[1:10, 1:5]
+as_tibble(pca_matrix, rownames = "Sample")
+pc_eigenvalues <- sample_pca$sdev^2
+pc_eigenvalues <- tibble(PC = factor(1:length(pc_eigenvalues)),
+                         variance = pc_eigenvalues) %>% 
+  mutate(pct = variance/sum(variance)*100) %>% 
+  mutate(pct_cum = cumsum(pct))
+
+pc_eigenvalues
+
+pc_eigenvalues %>% 
+  ggplot(aes(x = PC)) +
+  geom_col(aes(y = pct)) + 
+  geom_line(aes(y = pct_cum, group = 1)) +
+  geom_point(aes(y = pct_cum)) +
+  theme(panel.background = element_rect(fill = "lightgray", colour = "white")) +
+  labs(x = "Principal Component", y = "Fraction of Variance Explained")
+  
+pc_scores <- sample_pca$x
+
+pc_scores <- pc_scores %>% 
+  as_tibble(rownames = "Sample")
+
+pc_scores
+
+pc_scores_batch <- pc_scores %>% 
+  add_column(Batch = c("First", "Second", "Third", "Fourth",
+                       "First", "Second", "Third", "Fourth", 
+                       "First", "Second", "Third", "Fourth", 
+                       "First", "Second", "Third", "Fourth"))
+
+pc_scores_batch %>% 
+  ggplot(aes(x = PC1, y = PC2, 
+             colour = Sample, shape = Batch)) +
+  ggtitle("PCA Plot of Log Transformed Raw Expression Data") +
+  theme(plot.title = element_text(hjust = 0.5), 
+        panel.background = element_rect(fill = "lightgray", colour = "white")) +
+  scale_color_manual(values = c("mediumpurple2", "turquoise3", "tomato", "springgreen4")) +
+  geom_point()
+
+
+#PCA Loadings
+#Requires Annotation
+pc_loadings <- sample_pca$rotation
+
+pc_loadings <- pc_loadings %>% 
+  as_tibble(rownames = "ProbeIDNo.")
+
+pc_loadings
+
+top_genes <- pc_loadings %>% 
+  select(Gene, PC1, PC2) %>% 
+  pivot_longer(matches("PC"), names_to = "PC", values_to = "loading") %>% 
+  group_by(PC) %>% 
+  arrange(desc(abs(loading))) %>% 
+  slice(1:10) %>% 
+  pull(Gene) %>% 
+  unique()
+
+top_genes
+
+top_loadings <- pc_loadings %>% 
+  filter(Gene %in% top_genes)
+
+loadings_plot <- ggplot(data = top_loadings) +
+  geom_segment(aes(x = 0, y = 0, xend = PC1, yend = PC2), 
+               arrow = arrow(length = unit(0.1, "in")), 
+               colour = "brown") +
+  geom_text(aes(x = PC1, y = PC2, label = Gene),
+            nudge_y = 0.005, size = 3) +
+  theme(panel.background = element_rect(fill = "lightgray", colour = "white")) +
+  scale_x_continuous(expand = c(0.02, 0.02))
+
+loadings_plot
+
+### 3D PCA??
+## Movie function allows for an interactive view of the data
+install.packages("pca3d")
+library(pca3d)
+
+
+sample_pca3d <- prcomp(pca_matrix, scale. = TRUE)
+
+#adjust the components to view the rotation
+pca3d <- pca3d(sample_pca3d, components = c(1, 2,3),
+               group = c("Control","Control","Control","Control",
+                         "Amiodarone", "Amiodarone", "Amiodarone", "Amiodarone", 
+                         "DEHP10", "DEHP10", "DEHP10", "DEHP10", 
+                         "DEHP25","DEHP25","DEHP25","DEHP25"),
+               col = c("mediumpurple2","mediumpurple2","mediumpurple2","mediumpurple2",
+                       "turquoise3", "turquoise3", "turquoise3", "turquoise3",
+                       "tomato", "tomato", "tomato", "tomato",
+                       "springgreen4","springgreen4","springgreen4","springgreen4"),
+               title = "PCA of Raw Data", radius = 2, legend = 'topright',
+               show.ellipses = FALSE)
+
+makeMoviePCA()
+
+pca2d <- pca2d(sample_pca3d, components = c(1, 2),
+               group = c("Control","Control","Control","Control",
+                         "Amiodarone", "Amiodarone", "Amiodarone", "Amiodarone", 
+                         "DEHP10", "DEHP10", "DEHP10", "DEHP10", 
+                         "DEHP25","DEHP25","DEHP25","DEHP25"),
+               col = c("mediumpurple2","mediumpurple2","mediumpurple2","mediumpurple2",
+                       "turquoise3", "turquoise3", "turquoise3", "turquoise3",
+                       "tomato", "tomato", "tomato", "tomato",
+                       "springgreen4","springgreen4","springgreen4","springgreen4"),
+               title = "PCA Plot of of Log Transformed Raw Data", radius = 2, legend = 'bottomleft',
+               show.ellipses = TRUE)
+
+
+
+##### Determine the proportion of variance of each component
+proportionvariances <- ((PCA_raw$sdev^2) / (sum(PCA_raw$sdev^2)))*100
+
+pairs(
+  PCA_raw$x[,1:15],
+  col = "forestgreen",
+  cex = 0.8,
+  main = "Principal components analysis bi-plot\nPCs 1-5",
+  pch = 16)
+
+#### ------------- Reimport SDF file to remove outliers from analysis ---- ####
+
+SDRF <- read.delim("Targets2.txt", check.names=FALSE, stringsAsFactors=FALSE)
+SDRF[,c("ArrayDataFile", "Characteristics[treatment]", "Characteristics[batch]")]
+
+Treatment <-SDRF[,"Characteristics[treatment]"]
+Batch <- SDRF[, "Characteristics[batch]"]
+
+levelsT <- c("Control", "Amiodarone", "DEHP 10", "DEHP 25")
+levelsB <- c("1", "2", "3", "4")
+Treatment <- factor(Treatment, levels=levelsT)
+Batch2 <- factor(Batch, levels = levelsB)
+
+x <- read.maimages(SDRF[,"ArrayDataFile"], source="agilent.median", 
+                   green.only=TRUE, other.columns = 
+                     "gIsWellAboveBG")
+
+##### ------- Normalization ---------- ####
+###normexp is a background correction, followed by quantile normalization and offset of 50###
+###cite: www.chipster.csc.fi/manual/norm-agilent-one-color.html 
+
+#tight values along the x-axis would be good - means that there's less background
+#signals interfering and that the background signal is decent (I think)
+
+plotFB(x, array = 1)
+plotFB(x, array = 2)
+plotFB(x, array = 3)
+plotFB(x, array = 4)
+plotFB(x, array = 5)
+plotFB(x, array = 6)
+plotFB(x, array = 7)
+plotFB(x, array = 8)
+plotFB(x, array = 9)
+plotFB(x, array = 10)
+plotFB(x, array = 11)
+plotFB(x, array = 12)
+plotFB(x, array = 13)
+plotFB(x, array = 14)
+plotFB(x, array = 15)
+plotFB(x, array = 16)
+
+#offset which gives highest df.prior is optimal. 
+#Offsets of 50 > 25 > 10 > 100 > 150 > 200 with ~6 vs ~ 4.2 - 5.7
+#Only achieve the 6 with offset when using robust = TRUE with eBayes 
+#https://support.bioconductor.org/p/40312/
+x.bgcorrect <- backgroundCorrect(x, method="normexp", offset = 50)
+
+#Quantile normalization seems to perform better than the alternatives (cyclicloess vs scale vs none)
+x.bgcorrect.norm <- normalizeBetweenArrays(x.bgcorrect, method="quantile")
+
+
+#Average replicate probes
+x.bgcorrect.norm.ave <- avereps(x.bgcorrect.norm, ID = x.bgcorrect.norm$genes$SystematicName)
+
+
+corrected_bp <- boxplot(x.bgcorrect.norm.ave$E, varwidth = TRUE, cex = 0.1, ylab = "Expression",
+        xlab = "Sample", las = 2, names = Treatment, cex.axis = 0.5, cex.lab = 0.5)
+
+corrected_bplog <- boxplot(log2(x.bgcorrect.norm.ave$E), varwidth = TRUE, cex = 0.1, ylab = "Log2Expression",
+                        xlab = "Sample", las = 2, names = Treatment, cex.axis = 0.5, cex.lab = 0.5)
+
+
+### Filter out control spots, probes with no Gene Id or Symbol, and 
+###unexpressed probes. Keep probes that are above background on at
+###least **3 arrays (3 reps per treatment - change if more reps)
+
+controls <- x.bgcorrect.norm.ave$genes$ControlType==1L
+
+NoSymbol <- is.na(x.bgcorrect.norm.ave$genes$Symbol)
+
+IsExpr <- rowSums(x.bgcorrect.norm.ave$other$gIsWellAboveBG > 0) >=3
+
+### Select probes to keep in new data object filt###
+
+x.bgcorrect.norm.ave.filt <- x.bgcorrect.norm.ave[!controls & IsExpr, ]
+dim(x.bgcorrect.norm.ave.filt)
+
+
+corrected_bp <- boxplot(x.bgcorrect.norm.ave.filt$E, varwidth = TRUE, cex = 0.1, ylab = "Expression",
+                        xlab = "Sample", las = 2, names = Treatment, cex.axis = 0.5, cex.lab = 0.5)
+
+corrected_bplog <- boxplot(log2(x.bgcorrect.norm.ave.filt$E), varwidth = TRUE, cex = 0.1, ylab = "Log2Expression",
+                           xlab = "Sample", las = 2, names = Treatment, cex.axis = 0.5, cex.lab = 0.5)
+
+
+#### --------- Hierarchical Clustering ----------- ####
+pv <- pvclust(x.bgcorrect.norm.ave.filt$E, method.dist= "euclidean", method.hclust = "ward.D2", nboot = 100)
+
+plot(pv)
+############################### Convert to Expression Set ################################################
+express <- as.matrix(x.bgcorrect.norm.ave.filt$E)
+
+pheno <- new("AnnotatedDataFrame",data = x.bgcorrect.norm.filt$targets)
+
+features <- new("AnnotatedDataFrame", data = x.bgcorrect.norm.filt$genes)
+
+eset <- ExpressionSet(assayData = assayDataNew(exprs = x.bgcorrect.norm.filt$E), 
+                      phenoData = pheno,
+                      featureData = features)
+
+boxplot(eset[1,] ~ pheno[,"Control"], main = f[1,"Symbol"])
+
+
+
+
+#### ----------------------------------Quality Assessments------------------------------ ####
+
+## Density Plots ##
+limma::plotDensities(x, log = TRUE, legend = 'topright')
+
+limma::plotDensities(x.bgcorrect, log = TRUE, legend = 'topright')
+
+limma::plotDensities(x.bgcorrect.norm.ave, log = TRUE, legend = 'topright')
+
+limma::plotDensities(x.bgcorrect.norm.ave.filt, log = TRUE, legend = 'topright')
+
+
+
+#limma::plotMA(x, array = 1)
+#limma::plotMA(x.bgcorrect, array = 1)
+#limma::plotMA(x.bgcorrect.norm, array = 1)
+
+limma::plotMA(x.bgcorrect.norm.ave.filt, array = 1)
+
+limma::plotMA(x.bgcorrect.norm.ave.filt, array = 2)
+
+limma::plotMA(x.bgcorrect.norm.ave.filt, array = 3)
+
+limma::plotMA(x.bgcorrect.norm.ave.filt, array = 4)
+
+limma::plotMA(x.bgcorrect.norm.ave.filt, array = 5)
+
+limma::plotMA(x.bgcorrect.norm.ave.filt, array = 6)
+
+limma::plotMA(x.bgcorrect.norm.ave.filt, array = 7)
+
+limma::plotMA(x.bgcorrect.norm.ave.filt, array = 8)
+
+#I think this is only useful for two-color
+##imageplot(x, RG$printer)  #Might not be able to do this with one-colour
+
+#### --------------------- Design model -------------------------------------------------- ####
+# Batch effects: https://support.bioconductor.org/p/36029/
+#https://bioconductor.org/packages/release/workflows/vignettes/RNAseq123/inst/doc/designmatrices.html#design-and-contrast-matrices
+#The design matrix absorbs batch 1 into the treatment and therefore controls for batch effects using batch 1 as reference.
+# See https://support.bioconductor.org/p/69370/ for more info
+
+
+groups <- factor(SDRF$`Characteristics[treatment]`, levels = c("Control", "Amiodarone", "DEHP10", "DEHP25"))
+batch3 <- factor(SDRF$`Characteristics[batch]`, levels = c("1", "2", "3", "4"))
+
+design <- model.matrix(~0 + groups + batch3)
+
+colnames(design) = c("Control", "Amiodarone","DEHP10", "DEHP25", "Batch2", "Batch3", "Batch4")
+
+
+### set up comparison matrix to assess comparisons###
+
+###Converts everything to numeric so lose all gene and probe data.....
+#file.filtered.matrix <- data.matrix(file.filtered)
+
+
+
+#### ------------------ Assess Array Weights -------------------------------------------- ####
+arrayw <- arrayWeights(x.bgcorrect.norm.ave.filt, design = design)
+barplot(arrayw, xlab = "Array", ylab = "Weight", col = "white", las = 2)
+abline(h = 1, lwd = 2, lty = 2, col = "red")
+
+##Haven't annotated yet so can't do this
+##x.bgcorrect.norm.ave.filt$genes <- x.bgcorrect.norm.ave.filt$genes[,c("ProbeName", "Symbol", "EntrezID")]
+
+#head(x.bgcorrect.norm.ave.filt$genes)
+
+
+### Now to search for DE genes by setting up design ####
+### design with the ~0 term will give all pairwise comparisons 
+### see Law et al. 2020 A guide to creating design matrices for gene expression exp
+
+#### ------------------Weighting ----------------------------####
+#If weights are off, use lmfit with weights ##
+fitw <- lmFit(x.bgcorrect.norm.ave.filt, weights = arrayw, design = design)
+
+fitw <- eBayes(fitw, trend = TRUE, robust = TRUE)
+
+limma::plotMA(fitw)
+
+#summary(decideTests(fitw))
+
+#boxplot(fit2$t~x.bgcorrect.norm.ave.filt$genes$Status, at = 1:5-0.2, boxwex = 0.4, xlab = "control", 
+#ylab = "moderatedt-statistics", pch = ".", ylim = c(-70, 70), medlwd = 1)
+
+# boxplot(fitw$t~x.bgcorrect.norm.ave.filt$genes$Status, at = 1:5-0.2, boxwex = 0.4, xlab = "control", 
+#ylab = "moderated t-statistics", pch = ".", ylim = c(-70, 70), medlwd = 1)
+
+contrast.matrix <- makeContrasts(contrasts = c("Amiodarone-Control", "DEHP10-Control", "DEHP25-Control"), 
+                                 levels = design)
+
+fit2 <- contrasts.fit(fitw, contrast.matrix)
+
+limma::plotMA(fit2)
+
+### Calculate t-statistics
+
+fit3 <- eBayes(fit2, trend=TRUE, robust=TRUE)
+
+
+## plot distribution of adj.p.vals ##
+tT <- topTable(fit3, adjust.method = "fdr", number = nrow(fit2))
+
+z <- -log10(tT$adj.P.Val)
+
+plot(z, type = "l")
+
+sigline <- c(0.05, 0.01, 0.005, 0.001, 0.0005, 0.0001)
+
+sigline <- -log10(sigline)
+
+sigcolors <- c("red", "blue", "green", "orange", "black", "purple")
+
+sapply(1:length(sigline), function(z){abline(h=sigline[z], col = sigcolors[z])})
+
+
+##Check it out
+##The lfc is set to 0.58; remember that we are working with log2 fold changes so this translates to a fold change of 1.5
+##lfc = 1 is a 2-fold change
+##lfc = 1 == lfc = 2^1
+##To get a 1.5 fold change: (1) lfc = 0.58 === 2^0.58=1.49
+summary(decideTests(fit3, adj.p.value = 0.05, adjust.method = "BH", lfc = 0.58))
+
+results <- decideTests(fit3, adj.p.value = 0.05, adjust.method = "BH", lfc = 0.58)
+
+### Lists
+probeset.listCA <- topTable(fit3, coef = 1, adjust.method = "BH", p.value = 0.05, number = Inf, lfc = 0.58)
+probeset.listCD10 <- topTable(fit3, coef = 2, adjust.method = "BH", p.value = 0.05, number = Inf, lfc = 0.58)
+probeset.listCD25 <- topTable(fit3, coef = 3, adjust.method = "BH", p.value = 0.05,number = Inf, lfc = 0.58)
+
+
+#### ----------------- Save infinite DEGs --------------------------------------- ####
+###The "BH" method , which controls the expected FDR below the specified value, is the 
+###default adjustment method because it is the most likely to be appropriate for microarray studies
+
+CD10Results <- topTable(fit3, n=Inf, coef=2, p.value = 0.05)
+
+CD25Results <- topTable(fit3, n= Inf, coef=3, p.value = 0.05)
+
+##Merge the files? Can this work...
+#xdf <- as.data.frame.EListRaw(x)
+#x2 <- left_join(xdf, y, by = "ProbeName")
+
+
+#This will be too much of a pain - just join the annotation file manually
+#gsd <- getGEO("GPL20844")
+
+
+
+#### Export the results of the sign DEGs ####
+ResultsFileCD10 <- left_join(CD10Results, AnnotationFileTrimmed, by = "ProbeName")
+
+ResultsFileCD10 <- ResultsFileCD10 %>% 
+  distinct(ProbeName, logFC, AveExpr, t, P.Value, adj.P.Val, B, GENE_SYMBOL, GENE_NAME, DESCRIPTION) %>% 
+  select("ProbeName", "logFC", "AveExpr", "t", "P.Value", "adj.P.Val", "B", "GENE_SYMBOL",
+         "GENE_NAME", "DESCRIPTION")
+
+ResultsFileCD25 <- left_join(CD25Results, AnnotationFileTrimmed, by = "ProbeName")
+
+ResultsFileCD25 <- ResultsFileCD25 %>% 
+  distinct(ProbeName, logFC, AveExpr, t, P.Value, adj.P.Val, B, GENE_SYMBOL, GENE_NAME, DESCRIPTION) %>% 
+  select("ProbeName", "logFC", "AveExpr", "t", "P.Value", "adj.P.Val", "B", "GENE_SYMBOL",
+         "GENE_NAME", "DESCRIPTION")
+
+
+View(ResultsFileCD10)
+View(ResultsFileCD25)
+
+### Save the topTable as a data.frame otherwise it won't work in Enhancedvolcano
+### Also, save that file yo (adjust n to whatever you want to keep)
+
+
+### This one works
+write.table(ResultsFileCD10, file = "ResultsFileControlDEHP10.txt", sep = "\t")
+write.table(ResultsFileCD25, file = "ResultsFileControlDEHP25.txt", sep = "\t")
+
+
+
+########## Convert to EntrezID #################
+# Extract genes from data sets
+geneListCA <- topTable(fit3, coef = 1, number = Inf)
+geneListCD10 <- topTable(fit3, coef = 2, number = Inf)
+geneListCD25 <- topTable(fit3, coef = 3, number = Inf)
+
+#Remove unneeded columns
+geneListCA1 <- geneListCA %>% 
+  select(AveExpr, SystematicName, logFC) %>%
+  as.data.frame() 
+
+geneListCD101 <- geneListCD10 %>% 
+  select(AveExpr, SystematicName, logFC) %>%
+  as.data.frame()
+
+geneListCD251 <- geneListCD25 %>% 
+  select(AveExpr, SystematicName, logFC) %>%
+  as.data.frame()
+
+#save gene list from significant DEGs and all
+genesCA1 <- probeset.listCA$SystematicName
+genesCA2 <- geneListCA1$SystematicName
+
+genesCD101 <- probeset.listCD10$SystematicName
+genesCD102 <- geneListCD101$SystematicName
+
+genesCD251 <- probeset.listCD25$SystematicName
+genesCD252 <- geneListCD251$SystematicName
+
+
+#Convert
+eg.CA = bitr(genesCA1, fromType = "ACCNUM", toType = "ENTREZID", OrgDb = "org.Dr.eg.db")
+
+eg.CD10 = bitr(genesCD101, fromType = "ACCNUM", toType = "ENTREZID", OrgDb = "org.Dr.eg.db") 
+
+eg.CD25 = bitr(genesCD251, fromType = "ACCNUM", toType = "ENTREZID", OrgDb = "org.Dr.eg.db") 
+
+
+######---------------------- Graphing & Representation ---------------------- ####
+
+#####----------------------- Volcanos -------------------------------------######
+#### Save object
+CD10vp <- topTable(fit3, n=Inf, coef=2)
+
+CD25vp <- topTable(fit3, n= Inf, coef=3)
+
+
+
+##Enhanced Volcano Plots ##
+## Using adj.P.Val gives a ceiling effect. Use P value for a smoother look
+library(EnhancedVolcano)
+
+EnhancedVolcano(CD10vp, 
+                lab = rownames(CD10vp),
+                x = 'logFC',
+                y = 'P.Value',
+                pCutoff = 0.05,
+                FCcutoff = 2.0, 
+                xlim = c(-10,10),
+                ylim = c(1,10),
+                pointSize = 1.0,
+                colAlpha = 1,
+                labSize = 4.0)
+
+
+EnhancedVolcano(CD25vp, 
+                lab = rownames(CD25vp),
+                x = 'logFC',
+                y = 'P.Value',
+                pCutoff = 0.05,
+                FCcutoff = 2.0, 
+                xlim = c(-10,10),
+                ylim = c(0,10),
+                pointSize = 1.0,
+                colAlpha = 1,
+                labSize = 4.0)
+
+
+
+#####-------------------- Venn Diagrams ---------------- #######
+## All contrasts
+vennDiagram(results, 
+            cex = 1, lwd = 2, 
+            counts.col = c('cornflowerblue', 'firebrick'), 
+            circle.col = c("cornflowerblue", "firebrick"))
+
+
+## Only of interest
+## split into up/down reg
+## Change 'include' to "both" to visualize total DEGs instead
+vennDiagram(results[,c(1, 2, 3)],
+            include = c("up", "down"),
+            cex = 1, lwd = 2, 
+            counts.col = c('black', 'firebrick'), 
+            circle.col = c("cornflowerblue", "firebrick", "green3"))
+
+
+## ggplot ##
+
+df.venn <- data.frame(x = c(0, 0.866, -0.866),
+                      y = c(1, -0.5, -0.5),
+                      labels = c('A', 'B', 'C'))
+
+ggplot(df.venn, aes(x0 = x, y0 = y, r = 1.5, fill = labels)) +
+  geom_circle(alpha = 0.3, size = 1, colour = 'gray') +
+  coord_fixed() +
+  theme_void()
+
+
+## this one is nice too :) ##
+
+cd10 <- topTable(fit3, n = Inf, coef = 2, p.value = 0.05, lfc = 2)
+cd25 <- topTable(fit3, n = Inf, coef = 3, p.value = 0.05, lfc = 2)
+
+list_venn <- list("Control vs DEHP 10uM" = cd10$ProbeName, 
+                  "Control vs DEHP 25 nM" = cd25$ProbeName)
+list_venn
+
+
+ggvenn(list_venn, stroke_size = 0.5, set_name_size =4)
+
+
+#### -------------- Heatmaps ---------------------------####
+
+coolmap(x.bgcorrect.norm.ave.filt, col = "redgreen", cluster.by = "expression level", linkage.row = "ward", linkage.col = "ward") 
+## I think this is the code that crashed the server
+coolmap(results, col = "redgreen", cluster.by = "expression level", linkage.row = "ward", linkage.col = "ward")
+coolmap(y[rowname(results1),])
+
+
+results.df.hm <- topTable(fit3, n = Inf)
+
+coolmap(result)
+
+heatmapdf <- full_join(ResultsFileCD10, ResultsFileCD25, by = "ProbeName", 
+                       suffix = c(".CD10", ".CD25"))
+
+heatmapdf2 <- heatmapdf %>% 
+  select(ProbeName, AveExpr.CD10, AveExpr.CD25) %>% 
+  distinct()
+
+heatmapresult <- heatmapdf2[-1]
+
+row.names(heatmapresult) <- heatmapdf2$ProbeName2
+
+View(heatmapresult)
+
+
+heatmapdf1 <- heatmapdf2[,-1]
+rownames(heatmapdf1) <- heatmapdf2[,-1]
+
+coolmap(heatmapresult)
+
+heatmap.results.matrix <- as.matrix(heatmapresult)
+heatmap(heatmap.results.matrix)
+
+
+
+
+library(gplots)
+topgenes <- fit3$Gene
+
+idx = rownames(results.df.hm)
+
+heatmap.2(exprs(eset)[idx,], trace = 'none', scale = 'row')
+
+p <- ggplot(results.df.hm3, aes(x = ))
+
+selected <- p.adjust(fit3$p.value[,2]) < 0.05
+selected <- as.matrix(selected)
+
+heatmap(results.matrix2)
+
+
+install.packages("ComplexHeatmap")
+library(ComplexHeatmap)
+
+
+
+
+
+
+
+################################### GEne Ontology Analysis ####################################
