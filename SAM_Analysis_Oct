@@ -1,0 +1,196 @@
+install.packages("C:/Users/HERACLES-admin/Downloads/convert_1.68.0.zip", repos = NULL, type = "win.binary")
+install.packages("BiocManager")
+BiocManager::install("BiocGenerics")
+install.packages("parallel")
+BiocManager::install(c("Matrix", "mgcv", "nlme", "survival"), dependencies = TRUE)
+BiocManager::install("Biobase")
+BiocManager::install("convert")
+BiocManager::install("samr")
+library(BiocManager)
+library(BiocGenerics)
+library(Biobase)
+library(samr)
+
+#prep data file
+xdata <- as.data.frame(x.bgcorrect.norm.ave.filt$E)
+xdata <- rownames_to_column(xdata)
+gene <- x.bgcorrect.norm.ave.filt$genes
+gene <- gene$SystematicName
+
+eg.samr = bitr(gene, fromType = "ACCNUM", toType = "ENTREZID", OrgDb = "org.Dr.eg.db") 
+eg.samr <- as.data.frame(eg.samr)
+
+samr.out <- left_join(eg.samr, xdata, by = c("ACCNUM" = "rowname"))
+
+#For webapp
+write.table(samr.out, file = "samout.txt", sep = "\t")
+
+##################### samr ####################################
+#### 2018 version 3.0
+#I think this one is better than siggenes
+### Note: there are two functions you can use (SAM or samr), but for these purposes,
+# use SAM as it's easier. I think samr has more arguments and is better for survival
+# data. Keep in mind these two f(x)s give outputs with different formats, so 
+# check that before running a new f(x)
+
+##https://statweb.stanford.edu/~tibs/SAM/sam.pdf re:pg 13-14
+#Different experimental platforms require different normalizations. Therefore, the user is required
+#to normalize the data from the different experiments (columns) before running SAM. 
+#For oligonucleotide data, a stronger calibration may be
+#necessary: for example, a linear normalization of the data for each experiment versus the row-wise
+#average for all experiments
+
+#Delta: the different values of ∆ for which the numbers of genes and the estimated FDRs are computed,
+#p0: the estimated prior probability that a gene is not differentially expressed,
+#False: the number of falsely called genes (which is not the expected
+#number of false positives, see below and Tusher et al., 2001),
+#Called: the number of genes called differentially expressed,
+#FDR: the estimated FDR computed by p0 · False / FDR.
+
+
+#Ref:https://books.google.gr/books?id=_Eu-BAAAQBAJ&pg=PA237&lpg=PA237&dq=samr+what+delta,+fdr,+permutations&source=bl&ots=UFUdgh9aO-&sig=ACfU3U3PxOf1jxYkXJH9afASOUJQKXIYog&hl=en&sa=X&ved=2ahUKEwiO-c2tncfzAhURDuwKHZGxBWAQ6AF6BAgaEAM#v=onepage&q=samr%20what%20delta%2C%20fdr%2C%20permutations&f=false
+#^ uses median FDR to get delta value.
+#In sample data, there was only a minor difference between median and 90th percentile FDR (13-17%) in amiodarone and DEHP 25 vs control but 40-70%
+#in the DEHP10 vs control group. However, SAM is less ideal for small sample sizes to perhaps the 90th percentile is preferable
+
+#Ref:https://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.403.2722&rep=rep1&type=pdf
+#^ suggests higher permutations are better (they use 200, while ^^ uses 1 000)
+
+
+######### two class unpaired comparison
+# y must take values 1,2
+classes <- c(1,1,1,2,2,2,2)
+
+
+####-------------------Control vs Amiodarone -----------------------###
+data.am <-as.matrix(samr.out[,3:9])
+
+dam=list(x=data.am,y=classes,
+       geneid=as.character(samr.out[,1]),genenames=as.character(samr.out[,2])
+       ,
+       logged2=TRUE)
+samr.objam<-samr(dam,  resp.type="Two class unpaired", nperms=1000)
+
+delta.table <- samr.compute.delta.table(samr.objam)
+delta.table
+delta=2
+delta.table <- samr.compute.delta.table(samr.objam, dels = 2, nvals =1)
+delta.table
+
+sam.plot.am <- samr.plot(samr.objam, delta)
+sam.plot.am
+
+siggenes.table.am <- samr.compute.siggenes.table(samr.objam,delta, dam,
+                                            delta.table,min.foldchange=1.5)
+
+genes.up.am <- as.data.frame(siggenes.table.am$genes.up)
+genes.down.am <- as.data.frame(siggenes.table.am$genes.lo)
+
+write.table(genes.up.am, file = "samout_am_up.txt", sep = "\t")
+write.table(genes.down.am, file = "samout_am_down.txt", sep = "\t")
+
+###### ---------------Control vs DEHP 10 --------------------------------- ###
+data.d10 <- as.matrix(samr.out[,c(3:5, 10:13)])
+
+dd10=list(x=data.d10,y=classes,
+         geneid=as.character(samr.out[,1]),genenames=as.character(samr.out[,2])
+         ,
+         logged2=TRUE)
+samr.objd10<-samr(dd10,  resp.type="Two class unpaired", nperms=1000)
+
+delta.table <- samr.compute.delta.table(samr.objd10)
+delta.table
+delta=1.8
+delta.table <- samr.compute.delta.table(samr.objd10, dels = 1.8, nvals = 1)
+delta.table
+
+sam.plot.d10 <- samr.plot(samr.objd10, delta)
+sam.plot.d10
+
+siggenes.table.d10 <- samr.compute.siggenes.table(samr.objd10,delta, dd10,
+                                               delta.table,min.foldchange=1.5)
+
+genes.up.d10     <- as.data.frame(siggenes.table.d10$genes.up)
+genes.down.d10     <- as.data.frame(siggenes.table.d10$genes.lo)
+
+write.table(genes.up.d10, file = "samout_d10_up.txt", sep = "\t")
+write.table(genes.down.d10, file = "samout_d10_down.txt", sep = "\t")
+
+###### --------------------Control vs DEHP 25 ---------------------------- ###
+data.d25 <- as.matrix(samr.out[,c(3:5, 14:17)])
+
+dd25=list(x=data.d25,y=classes,
+          geneid=as.character(samr.out[,1]),genenames=as.character(samr.out[,2])
+          ,
+          logged2=TRUE)
+samr.objd25 <- samr(dd25,  resp.type="Two class unpaired", nperms=1000)
+
+delta.table <- samr.compute.delta.table(samr.objd25)
+delta.table
+delta=1.8
+delta.table <- samr.compute.delta.table(samr.objd25, dels = 1.8, nvals = 1)
+delta.table
+
+sam.plot.d25 <- samr.plot(samr.objd25, delta)
+sam.plot.d25
+
+siggenes.table.d25 <- samr.compute.siggenes.table(samr.objd25,delta, dd25,
+                                                  delta.table,min.foldchange=1.5)
+
+genes.up.d25 <- as.data.frame(siggenes.table.d25$genes.up)
+genes.down.d25 <- as.data.frame(siggenes.table.d25$genes.lo)
+
+write.table(genes.up.d25, file = "samout_d25_up.txt", sep = "\t")
+write.table(genes.down.d25, file = "samout_d25_down.txt", sep = "\t")
+
+########################### samr##############################
+
+### Note: there are two functions you can use (SAM or samr), but for these purposes,
+# use SAM as it's easier. I think samr has more arguments and is better for survival
+# data. Keep in mind these two f(x)s give outputs with different formats, so 
+# check that before running a new f(x)
+colnames(samdata) <- c("1", "1","1","1","2","2","2","2","3","3","3","3","4","4","4","4")
+cl2 <- c(rep(1,4), rep(2,4))
+colnames(samdataCAm) <- c(rep(1,3), rep(2,4))
+colnames(samdataCD1) <- c(rep(1,3), rep(2,4))
+colnames(samdataCD2) <- c(rep(1,3), rep(2,4))
+
+
+#################################
+samdataCAm2 <- samdataCAm[,c(1:7)]
+cl3 <- c(rep(1,3), rep(2,4))
+
+
+sam1 <- SAM(samdataCAm2, cl3, geneid = genes[,4], genenames = genes[,5], resp.type = "Two class unpaired")
+sam11 <- sam1$samr.obj
+
+#Delta: the different values of ∆ for which the numbers of genes and the estimated FDRs are computed,
+#p0: the estimated prior probability that a gene is not differentially expressed,
+#False: the number of falsely called genes (which is not the expected
+#number of false positives, see below and Tusher et al., 2001),
+#Called: the number of genes called differentially expressed,
+#FDR: the estimated FDR computed by p0 · False / FDR.
+
+
+delta.table1 <- samr.compute.delta.table(sam1$samr.obj, min.foldchange = 1)
+delta.table1
+#2
+delta.table1 <- samr.compute.delta.table(sam1$samr.obj, dels = 2, min.foldchange = 1)
+delta.table1
+
+#I actually don't understand this
+samr.missrate(sam1$samr.obj, 2, delta.table = delta.table1)
+
+
+samr.plot(sam1$samr.obj, 2, min.foldchange = 1)
+
+samout <- samr.pvalues.from.perms(sam1$samr.obj$tt, sam1$samr.obj$ttstar)
+samout
+
+samout2 <- samr.compute.siggenes.table(sam1$samr.obj, 2, samdataCAm2, delta.table1, min.foldchange = 1, compute.localfdr = TRUE)
+
+samr::print.SAMoutput(sam1)
+
+#samr::plot.SAMoutput(sam1)
+
+
