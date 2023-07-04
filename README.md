@@ -1,6 +1,6 @@
 - 👋 Hi, I’m @DaynaSchultz
 - 👀 I’m interested in multi-omics analyses
-- 🌱 I’m currently learning transcriptomic analysis of microarrays
+- 🌱 I’m currently learning transcriptomic analysis of count data (TempOSeq, RNA-Seq), untargeted metabolomics analysis, and transcriptomic-metabolomic multi-omics analysis
 
 
 <!---
